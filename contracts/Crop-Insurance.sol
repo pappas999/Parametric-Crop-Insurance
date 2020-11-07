@@ -11,7 +11,7 @@ pragma experimental ABIEncoderV2;
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/ChainlinkClient.sol";
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/Ownable.sol";
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/LinkTokenInterface.sol";
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorV3Interface.sol";
+import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorInterface.sol";
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/SafeMathChainlink.sol";
 
 
@@ -24,18 +24,17 @@ contract InsuranceProvider {
     uint public constant DAY_IN_SECONDS = 60; //How many seconds in a day. 60 for testing, 86400 for Production
     
     uint256 constant private ORACLE_PAYMENT = 0.1 * 10**18; // 0.1 LINK
-    address public constant LINK_KOVAN = 0xa36085F69e2889c224210F603D836748e7dC0088 ; //address of LINK token on Ropsten
+    address public constant LINK_KOVAN = 0x20fE562d797A42Dcb3399062AE9546cd06f63280 ; //address of LINK token on Ropsten
     
     address public constant ORACLE_CONTRACT = 0x4a3fbbb385b5efeb4bc84a25aaadcd644bd09721;
     string public constant JOB_ID = '6e34d8df2b864393a1f6b7e38917706b';
     
         
     //here is where all the insurance contracts are stored.
-    mapping (address => Insurance) contracts; 
+    mapping (address => InsuranceContract) contracts; 
     
     
     constructor()   public payable {
-        
     }
 
     /**
@@ -56,18 +55,17 @@ contract InsuranceProvider {
     /**
      * @dev Create a new contract for client, automatically approved and deployed to the blockchain
      */ 
-    function newContract(address _client, uint _duration, uint _premium, uint _totalCover, string _cropLocation) public payable returns(address) {
+    function newContract(address _client, uint _duration, uint _premium, uint _payoutValue, string _cropLocation) public payable onlyOwner() returns(address) {
         
-        //to do extra validation to ensure preimium paid matches with total _totalCover
-        require (msg.value > _totalCover.div(100),'Incorrect premium paid');
-        
-        //create contract, send payout amount so contract is fully funded
-        Insurance i = (new Insurance).value(_totalCover.add(1000000000000000))(_client, _duration, _premium, _totalCover, _cropLocation,
+
+        //create contract, send payout amount so contract is fully funded plus a small buffer
+        InsuranceContract i = (new InsuranceContract).value(_payoutValue.add(1000000000000000))(_client, _duration, _premium, _payoutValue, _cropLocation,
                                                          LINK_KOVAN, ORACLE_CONTRACT,JOB_ID, ORACLE_PAYMENT);
           
-        contracts[_client] = i;  //store insurance contract in contracts Map
+        contracts[address(i)] = i;  //store insurance contract in contracts Map
         
-        emit contractCreated(address(i), msg.value, _totalCover);
+        //emit an event to say the contract has been created and funded
+        emit contractCreated(address(i), msg.value, _payoutValue);
         
         //now that contract has been created, we need to fund it with enough LINK tokens to fulfil 1 Oracle request per day, with a small buffer added
         LinkTokenInterface link = LinkTokenInterface(i.getChainlinkToken());
@@ -80,9 +78,9 @@ contract InsuranceProvider {
     
 
     /**
-     * @dev returns the contract for a given client address
+     * @dev returns the contract for a given address
      */
-    function getContract(address _contract) external view returns (Insurance) {
+    function getContract(address _contract) external view returns (InsuranceContract) {
         return contracts[_contract];
     }
     
@@ -97,7 +95,7 @@ contract InsuranceProvider {
      * @dev Get the status of a given Contract
      */
     function getContractStatus(address _address) external view returns (bool) {
-        Insurance i = Insurance(_address);
+        InsuranceContract i = InsuranceContract(_address);
         return i.getContractStatus();
     }
     
@@ -124,7 +122,7 @@ contract InsuranceProvider {
 
 }
 
-contract Insurance is ChainlinkClient, Ownable  {
+contract InsuranceContract is ChainlinkClient, Ownable  {
     
     using SafeMathChainlink for uint;
     
@@ -140,8 +138,14 @@ contract Insurance is ChainlinkClient, Ownable  {
     uint startDate;
     uint duration;
     uint premium;
-    uint totalCover;
+    uint payoutValue;
     string cropLocation;
+    
+    uint256 public index;
+    uint256[2] public currentRainfallList;
+    
+    bytes32[] public jobIds;
+    address[] public oracles;
     
 
     uint daysWithoutRain;                   //how many days there has been with 0 rain
@@ -181,7 +185,7 @@ contract Insurance is ChainlinkClient, Ownable  {
      * @dev Prevents a data request to be called unless it's been a day since the last call (to avoid spamming and spoofing results)
      */    
     modifier callFrequencyOncePerDay() {
-        require(now - currentRainfallDateChecked > DAY_IN_SECONDS,'Can only check temeprature once per day');
+        require(now - currentRainfallDateChecked > DAY_IN_SECONDS,'Can only check rainfall once per day');
         _;
     }
     
@@ -195,7 +199,7 @@ contract Insurance is ChainlinkClient, Ownable  {
     /**
      * @dev Creates a new Insurance contract
      */ 
-    constructor(address _client, uint _duration, uint _premium, uint _totalCover, string _cropLocation, 
+    constructor(address _client, uint _duration, uint _premium, uint _payoutValue, string _cropLocation, 
                 address _link, address _oracle, string _job_id, uint256 _oraclePaymentAmount)  payable Ownable() public {
         
         //initialize variables required for Chainlink Node interaction
@@ -205,7 +209,7 @@ contract Insurance is ChainlinkClient, Ownable  {
         oraclePaymentAmount = _oraclePaymentAmount;
         
         //first ensure insurer has fully funded the contract
-        require(msg.value > _totalCover, "Not enough funds sent to contract");
+        require(msg.value >= _payoutValue, "Not enough funds sent to contract");
         
         //now initialize values for the contract
         insurer= msg.sender;
@@ -213,16 +217,22 @@ contract Insurance is ChainlinkClient, Ownable  {
         startDate = now + DAY_IN_SECONDS; //contract will be effective from the next day
         duration = _duration;
         premium = _premium;
-        totalCover = _totalCover;
+        payoutValue = _payoutValue;
         daysWithoutRain = 0;
         contractActive = true;
         cropLocation = _cropLocation;
+        
+        //set the oracles and jodids
+        oracles[0] = 0x4a3fbbb385b5efeb4bc84a25aaadcd644bd09721;
+        oracles[1] = 0x4a3fbbb385b5efeb4bc84a25aaadcd644bd09721;
+        jobIds[0] = '6e34d8df2b864393a1f6b7e38917706b';
+        jobIds[1] = '103a6edf984f21086a71a9205dad0c45';
         
         emit contractCreated(insurer,
                              client,
                              duration,
                              premium,
-                             totalCover);
+                             payoutValue);
     }
     
     /**
@@ -290,14 +300,14 @@ contract Insurance is ChainlinkClient, Ownable  {
     function payOutContract() private onContractActive()  {
         
         //Transfer agreed amount to client
-        client.transfer(totalCover);
+        client.transfer(payoutValue);
         
         //Transfer any remaining funds (premium) back to Insurer
         insurer.transfer(address(this).balance);
         LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
         require(link.transfer(insurer, link.balanceOf(address(this))), "Unable to transfer");
         
-        emit contractPaidOut(now, totalCover, currentRainfall);
+        emit contractPaidOut(now, payoutValue, currentRainfall);
         
         //now that amount has been transferred, can end the contract 
         //mark contract as ended, so no future calls can be done
@@ -348,8 +358,8 @@ contract Insurance is ChainlinkClient, Ownable  {
     /**
      * @dev Get the Total Cover
      */ 
-    function getTotalCover() external view returns (uint) {
-        return totalCover;
+    function getPayoutValue() external view returns (uint) {
+        return payoutValue;
     } 
     
     
@@ -475,3 +485,6 @@ contract Insurance is ChainlinkClient, Ownable  {
 
     
 }
+
+
+
