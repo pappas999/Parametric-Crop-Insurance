@@ -238,16 +238,15 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     /**
      * @dev Calls out to an Oracle to obtain weather data
      */ 
-    function checkContract() external onContractActive() returns (bytes32 requestId)   {
+    function checkContract(address _oracle, bytes32 _jobId) external onContractActive() returns (bytes32 requestId)   {
         //first call end contract in case of insurance contract duration expiring, if it hasn't won't do anything
         endContract();
         
         //contract may have been marked inactive above, only do request if needed
         if (contractActive) {
         
-            //grab updated weather info via Oracle request, should update currentRainfall
-            // newRequest takes a JobID, a callback address, and callback function as input
-            Chainlink.Request memory req = buildChainlinkRequest(stringToBytes32(jobId), address(this), this.checkContractCallBack.selector);
+            //get data from the first appid
+            Chainlink.Request memory req = buildChainlinkRequest(_jobId, address(this), this.checkContractCallBack.selector);
 
         
             // Adds an integer with the key "city" to the request parameters, to be used by the Oracle node as a parameter when making a REST request
