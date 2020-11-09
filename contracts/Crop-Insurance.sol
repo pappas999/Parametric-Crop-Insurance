@@ -13,6 +13,8 @@ import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/LinkTokenInterface.sol";
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorInterface.sol";
 import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/SafeMathChainlink.sol";
+import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorV3Interface.sol";
+
 
 
 
@@ -24,7 +26,7 @@ contract InsuranceProvider {
     uint public constant DAY_IN_SECONDS = 60; //How many seconds in a day. 60 for testing, 86400 for Production
     
     uint256 constant private ORACLE_PAYMENT = 0.1 * 10**18; // 0.1 LINK
-    address public constant LINK_KOVAN = 0x20fE562d797A42Dcb3399062AE9546cd06f63280 ; //address of LINK token on Ropsten
+    address public constant LINK_KOVAN = 0xa36085F69e2889c224210F603D836748e7dC0088 ; //address of LINK token on Kovan
     
     address public constant ORACLE_CONTRACT = 0x4a3fbbb385b5efeb4bc84a25aaadcd644bd09721;
     string public constant JOB_ID = '6e34d8df2b864393a1f6b7e38917706b';
@@ -85,11 +87,30 @@ contract InsuranceProvider {
     }
     
     /**
+     * @dev updates the contract for a given address
+     */
+    function updateContract(address _contract) external {
+        InsuranceContract i = InsuranceContract(_contract);
+        i.updateContract();
+    }
+    
+    /**
+     * @dev updates the contract for a given address
+     */
+    function getContractRainfall(address _contract) external view returns(uint) {
+        InsuranceContract i = InsuranceContract(_contract);
+        return i.getCurrentRainfall();
+    }
+    
+    
+    /**
      * @dev Get the insurer address for this insurance provider
      */
     function getInsurer() external view returns (address) {
         return insurer;
     }
+    
+    
     
     /**
      * @dev Get the status of a given Contract
@@ -125,10 +146,10 @@ contract InsuranceProvider {
 contract InsuranceContract is ChainlinkClient, Ownable  {
     
     using SafeMathChainlink for uint;
+    AggregatorV3Interface internal priceFeed;
     
     uint public constant DAY_IN_SECONDS = 60; //How many seconds in a day. 60 for testing, 86400 for Production
     uint public constant DROUGHT_DAYS_THRESDHOLD = 5;  //Number of consecutive days without rainfall to be defined as a drought
-    //uint public constant DROUGHT_RAINFALL_THRESDHOLD = 3;  //3 days above the temp is the trigger for contract conditions to be reached
     uint256 private oraclePaymentAmount;
     string private jobId;
 
@@ -144,9 +165,18 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     uint256 public index;
     uint256[2] public currentRainfallList;
     
-    bytes32[] public jobIds;
-    address[] public oracles;
+    bytes32[2] public jobIds;
+    address[2] public oracles;
     
+    string constant WORLD_WEATHER_ONLINE_URL = "http://api.worldweatheronline.com/premium/v1/weather.ashx?";
+    string constant WORLD_WEATHER_ONLINE_KEY = "629c6dd09bbc4364b7a33810200911";
+    string constant WORLD_WEATHER_ONLINE_PATH = "data.current_condition.precipMM";
+    
+    string constant OPEN_WEATHER_URL = "https://openweathermap.org/data/2.5/weather?";
+    string constant OPEN_WEATHER_KEY = "b4e40205aeb3f27b74333393de24ca79";
+    string constant OPEN_WEATHER_PATH = "rain.1h";
+    
+
 
     uint daysWithoutRain;                   //how many days there has been with 0 rain
     bool contractActive;                    //is the contract currently active, or has it ended
@@ -154,6 +184,7 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     uint currentRainfall = 0;               //what is the current rainfall for the location
     uint currentRainfallDateChecked = now + DAY_IN_SECONDS;  //when the last rainfall check was performed
     uint requestCount = 0;                  //how many requests for rainfall data have been made so far for this insurance contract
+    uint dataRequestsSent = 0;             //variable used to determine if both requests have been sent or not
     
 
     /**
@@ -202,6 +233,8 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     constructor(address _client, uint _duration, uint _premium, uint _payoutValue, string _cropLocation, 
                 address _link, address _oracle, string _job_id, uint256 _oraclePaymentAmount)  payable Ownable() public {
         
+        priceFeed = AggregatorV3Interface(0x9326BFA02ADD2366b30bacB125260Af641031331);
+        
         //initialize variables required for Chainlink Node interaction
         setChainlinkToken(_link);
         setChainlinkOracle(_oracle);
@@ -209,7 +242,7 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
         oraclePaymentAmount = _oraclePaymentAmount;
         
         //first ensure insurer has fully funded the contract
-        require(msg.value >= _payoutValue, "Not enough funds sent to contract");
+        //require(msg.value >= _premium.div(uint(getLatestPrice())), "Not enough funds sent to contract");
         
         //now initialize values for the contract
         insurer= msg.sender;
@@ -223,10 +256,18 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
         cropLocation = _cropLocation;
         
         //set the oracles and jodids
-        oracles[0] = 0x4a3fbbb385b5efeb4bc84a25aaadcd644bd09721;
-        oracles[1] = 0x4a3fbbb385b5efeb4bc84a25aaadcd644bd09721;
-        jobIds[0] = '6e34d8df2b864393a1f6b7e38917706b';
-        jobIds[1] = '103a6edf984f21086a71a9205dad0c45';
+        //oracles[0] = 0x240bae5a27233fd3ac5440b5a598467725f7d1cd;
+        //oracles[1] = 0x5b4247e58fe5a54a116e4a3be32b31be7030c8a3;
+        //jobIds[0] = '1bc4f827ff5942eaaa7540b7dd1e20b9';
+        //jobIds[1] = 'e67ddf1f394d44e79a9a2132efd00050';
+        
+        oracles[0] = 0x05c8fadf1798437c143683e665800d58a42b6e19;
+        oracles[1] = 0x05c8fadf1798437c143683e665800d58a42b6e19;
+        jobIds[0] = 'a17e8fbf4cbf46eeb79e04b3eb864a4e';
+        jobIds[1] = 'a17e8fbf4cbf46eeb79e04b3eb864a4e';
+        
+        
+        
         
         emit contractCreated(insurer,
                              client,
@@ -235,34 +276,44 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
                              payoutValue);
     }
     
-    /**
+ /**
      * @dev Calls out to an Oracle to obtain weather data
      */ 
-    function checkContract(address _oracle, bytes32 _jobId) external onContractActive() returns (bytes32 requestId)   {
+    function updateContract() public onContractActive() returns (bytes32 requestId)   {
         //first call end contract in case of insurance contract duration expiring, if it hasn't won't do anything
         endContract();
         
         //contract may have been marked inactive above, only do request if needed
         if (contractActive) {
         
-            //get data from the first appid
-            Chainlink.Request memory req = buildChainlinkRequest(_jobId, address(this), this.checkContractCallBack.selector);
+            dataRequestsSent = 0;
+            //First build up a request to World Weather Online to get the current rainfall
+            string memory url = string(abi.encodePacked(WORLD_WEATHER_ONLINE_URL, "key=",WORLD_WEATHER_ONLINE_KEY,"&q=",cropLocation,"&format=json"));
+            checkRainfall(oracles[0], jobIds[0], url, WORLD_WEATHER_ONLINE_PATH);
 
-        
-            // Adds an integer with the key "city" to the request parameters, to be used by the Oracle node as a parameter when making a REST request
-            //string memory url = string(abi.encodePacked(OPEN_WEATHER_URL, "id=",uint2str(cropLocation),"&appid=",OPEN_WEATHER_KEY));
-            //req.add("get", url); //sends the GET request to the oracle
-            //req.add("path", "main.temp");  //sends the path to be traversed when the GET returns data
-            //req.addInt("times", 100);     //tells the Oracle to * the result by 100 
             
-            req.add("q", cropLocation);
-            req.add("copyPath","data.current_condition.0.precipMM");
-        
-            //sends the request to the Oracle Contract which will emit an event that the Oracle Node will pick up and action
-            requestId = sendChainlinkRequestTo(chainlinkOracleAddress(), req, oraclePaymentAmount); 
-            
-            emit dataRequestSent(requestId);
+            // Now build up the second request
+           
+            url = string(abi.encodePacked(OPEN_WEATHER_PATH, "&q=",cropLocation,"&appId=",OPEN_WEATHER_KEY));
+            checkRainfall(oracles[1], jobIds[1], url, OPEN_WEATHER_PATH);    
+
         }
+    }
+    
+    /**
+     * @dev Calls out to an Oracle to obtain weather data
+     */ 
+    function checkRainfall(address _oracle, bytes32 _jobId, string _url, string _path) private onContractActive() returns (bytes32 requestId)   {
+
+        //First build up a request to World Weather Online to get the current rainfall
+        Chainlink.Request memory req = buildChainlinkRequest(_jobId, address(this), this.checkRainfallCallBack.selector);
+           
+        req.add("get", _url); //sends the GET request to the oracle
+        req.add("path", _path);
+        req.addInt("times", 100);
+        requestId = sendChainlinkRequestTo(_oracle, req, oraclePaymentAmount); 
+            
+        emit dataRequestSent(requestId);
     }
     
     
@@ -270,26 +321,37 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
      * @dev Callback function - This gets called by the Oracle Contract when the Oracle Node passes data back to the Oracle Contract/
      * The function will take the rainfall given by the Oracle and updated the Inusrance Contract state
      */ 
-    function checkContractCallBack(bytes32 _requestId, uint256 _rainfall) public payable recordChainlinkFulfillment(_requestId) onContractActive() callFrequencyOncePerDay()  {
+    function checkRainfallCallBack(bytes32 _requestId, uint256 _rainfall) public payable recordChainlinkFulfillment(_requestId) onContractActive() callFrequencyOncePerDay()  {
         //set current temperature to value returned from Oracle, and store date this was retrieved (to avoid spam and gaming the contract)
-        currentRainfall = _rainfall;
-        currentRainfallDateChecked = now;
-        requestCount +=1;
-        emit dataReceived(_rainfall);
         
-        //check if payout conditions have been met, if so call payoutcontract, which should also end/kill contract at the end
-        if (currentRainfall == 0 ) { //temp threshold has been  met, add a day of over threshold
-            daysWithoutRain += 1;
-        } else {
-            //there was rain today, so reset daysWithoutRain parameter 
-            daysWithoutRain = 0;
-            emit ranfallThresholdReset(currentRainfall);
-        }
         
-        if (daysWithoutRain >= DROUGHT_DAYS_THRESDHOLD) {  // day threshold has been met
-            //need to pay client out insurance amount
-            payOutContract();
-        }
+       currentRainfallList[dataRequestsSent] = _rainfall; 
+       // This ensures the array never goes past 2, we just keep rotating responses
+       dataRequestsSent = (dataRequestsSent + 1) % 2;
+       
+       //set current rainfall to average of both values
+       if (dataRequestsSent > 0) {
+          currentRainfall = currentRainfallList[0].add(currentRainfallList[1].div(2));
+          currentRainfallDateChecked = now;
+          requestCount +=1;
+        
+          //check if payout conditions have been met, if so call payoutcontract, which should also end/kill contract at the end
+          if (currentRainfall == 0 ) { //temp threshold has been  met, add a day of over threshold
+              daysWithoutRain += 1;
+          } else {
+              //there was rain today, so reset daysWithoutRain parameter 
+              daysWithoutRain = 0;
+              emit ranfallThresholdReset(currentRainfall);
+          }
+       
+          if (daysWithoutRain >= DROUGHT_DAYS_THRESDHOLD) {  // day threshold has been met
+              //need to pay client out insurance amount
+              payOutContract();
+          }
+       }
+       
+       emit dataReceived(_rainfall);
+        
     }
     
     
@@ -336,6 +398,22 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
         //mark contract as ended, so no future state changes can occur on the contract
         contractActive = false;
         emit contractEnded(now, address(this).balance);
+    }
+    
+    /**
+     * Returns the latest price
+     */
+    function getLatestPrice() public view returns (int) {
+        (
+            uint80 roundID, 
+            int price,
+            uint startedAt,
+            uint timeStamp,
+            uint80 answeredInRound
+        ) = priceFeed.latestRoundData();
+        // If the round is not complete yet, timestamp is 0
+        require(timeStamp > 0, "Round not complete");
+        return price;
     }
     
     
