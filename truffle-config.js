@@ -14,7 +14,7 @@ module.exports = {
     },
     live: {
       provider: () => {
-        return new HDWalletProvider(process.env.MNEMONIC, process.env.RPC_URL)
+        return new HDWalletProvider(process.env.MNEMONIC, process.env.KOVAN_RPC_URL)
       },
       network_id: '*',
       // ~~Necessary due to https://github.com/trufflesuite/truffle/issues/1971~~
@@ -24,7 +24,7 @@ module.exports = {
   },
   compilers: {
     solc: {
-      version: '0.6.6',
+      version: '0.4.24',
     },
   },
 }

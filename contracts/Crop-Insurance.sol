@@ -3,17 +3,20 @@ pragma experimental ABIEncoderV2;
 
 
 //Truffle Imports
-//import "chainlink/contracts/ChainlinkClient.sol";
-//import "chainlink/contracts/vendor/Ownable.sol";
-//import "chainlink/contracts/interfaces/LinkTokenInterface.sol";
+import "chainlink/contracts/ChainlinkClient.sol";
+import "chainlink/contracts/vendor/Ownable.sol";
+import "chainlink/contracts/interfaces/LinkTokenInterface.sol";
+import "chainlink/contracts/interfaces/AggregatorInterface.sol";
+import "chainlink/contracts/vendor/SafeMathChainlink.sol";
+import "chainlink/contracts/interfaces/AggregatorV3Interface.sol";
 
 //Remix imports - used when testing in remix 
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/ChainlinkClient.sol";
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/Ownable.sol";
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/LinkTokenInterface.sol";
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorInterface.sol";
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/SafeMathChainlink.sol";
-import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorV3Interface.sol";
+//import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/ChainlinkClient.sol";
+//import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/Ownable.sol";
+//import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/LinkTokenInterface.sol";
+//import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorInterface.sol";
+//import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/vendor/SafeMathChainlink.sol";
+//import "https://github.com/smartcontractkit/chainlink/blob/develop/evm-contracts/src/v0.4/interfaces/AggregatorV3Interface.sol";
 
 
 
