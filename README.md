@@ -11,7 +11,7 @@ Please refer to the <a href="blog.chain.link/decentralized-insurance-product">te
 
 The contracts can be deployed to Kovan either via <a href="https://remix.ethereum.org/#version=soljson-v0.4.24+commit.e67f0147.js&optimize=true&evmVersion=null&gist=79cf8c59f1fbf6e6a0327920c9a9c49a">this Remix link</a>, or via Truffle commands below.
 
-### Setup Environment Variables
+#### Setup Environment Variables
 You'll need a `MNEMONIC` and a kovan `KOVAN_RPC_URL` environment variable. Your `MNEMONIC` is your seed phrase of your wallet. You can find a `KOVAN_RPC_URL` from node provider services like [Infura](https://infura.io/)
 
 Then, either set them in a `bash_profile` file or export them into your terminal like:
