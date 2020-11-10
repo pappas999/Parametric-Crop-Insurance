@@ -22,6 +22,7 @@ contract InsuranceProvider {
     
     using SafeMathChainlink for uint;
     address public insurer = msg.sender;
+    AggregatorV3Interface internal priceFeed;
 
     uint public constant DAY_IN_SECONDS = 60; //How many seconds in a day. 60 for testing, 86400 for Production
     
@@ -37,6 +38,7 @@ contract InsuranceProvider {
     
     
     constructor()   public payable {
+        priceFeed = AggregatorV3Interface(0x9326BFA02ADD2366b30bacB125260Af641031331);
     }
 
     /**
@@ -61,8 +63,8 @@ contract InsuranceProvider {
         
 
         //create contract, send payout amount so contract is fully funded plus a small buffer
-        InsuranceContract i = (new InsuranceContract).value(_payoutValue.add(1000000000000000))(_client, _duration, _premium, _payoutValue, _cropLocation, LINK_KOVAN,ORACLE_PAYMENT);
-          
+        InsuranceContract i = (new InsuranceContract).value((_payoutValue * 1 ether).div(uint(getLatestPrice())))(_client, _duration, _premium, _payoutValue, _cropLocation, LINK_KOVAN,ORACLE_PAYMENT);
+         
         contracts[address(i)] = i;  //store insurance contract in contracts Map
         
         //emit an event to say the contract has been created and funded
@@ -145,6 +147,22 @@ contract InsuranceProvider {
     }
     
     /**
+     * Returns the latest price
+     */
+    function getLatestPrice() public view returns (int) {
+        (
+            uint80 roundID, 
+            int price,
+            uint startedAt,
+            uint timeStamp,
+            uint80 answeredInRound
+        ) = priceFeed.latestRoundData();
+        // If the round is not complete yet, timestamp is 0
+        require(timeStamp > 0, "Round not complete");
+        return price;
+    }
+    
+    /**
      * @dev fallback function, to receive ether
      */
     function() external payable {  }
@@ -157,7 +175,7 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     AggregatorV3Interface internal priceFeed;
     
     uint public constant DAY_IN_SECONDS = 60; //How many seconds in a day. 60 for testing, 86400 for Production
-    uint public constant DROUGHT_DAYS_THRESDHOLD = 3;  //Number of consecutive days without rainfall to be defined as a drought
+    uint public constant DROUGHT_DAYS_THRESDHOLD = 3 ;  //Number of consecutive days without rainfall to be defined as a drought
     uint256 private oraclePaymentAmount;
     string private jobId;
 
@@ -269,12 +287,13 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
         contractActive = true;
         cropLocation = _cropLocation;
         
-        //set the oracles and jodids
-       //oracles[0] = 0x240bae5a27233fd3ac5440b5a598467725f7d1cd;
+        //set the oracles and jodids to values from nodes on market.link
+        //oracles[0] = 0x240bae5a27233fd3ac5440b5a598467725f7d1cd;
         //oracles[1] = 0x5b4247e58fe5a54a116e4a3be32b31be7030c8a3;
         //jobIds[0] = '1bc4f827ff5942eaaa7540b7dd1e20b9';
         //jobIds[1] = 'e67ddf1f394d44e79a9a2132efd00050';
         
+        //or if you have your own node and job setup you can use it for both requests
         oracles[0] = 0x05c8fadf1798437c143683e665800d58a42b6e19;
         oracles[1] = 0x05c8fadf1798437c143683e665800d58a42b6e19;
         jobIds[0] = 'a17e8fbf4cbf46eeb79e04b3eb864a4e';
@@ -372,10 +391,9 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     function payOutContract() private onContractActive()  {
         
         //Transfer agreed amount to client
-        client.transfer(payoutValue);
+        client.transfer(address(this).balance);
         
         //Transfer any remaining funds (premium) back to Insurer
-        insurer.transfer(address(this).balance);
         LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
         require(link.transfer(insurer, link.balanceOf(address(this))), "Unable to transfer");
         
@@ -394,7 +412,7 @@ contract InsuranceContract is ChainlinkClient, Ownable  {
     function endContract() private onContractEnded()   {
         //Insurer needs to have performed at least 1 weather call per day to be eligible to retrieve funds back.
         //We will allow for 1 missed weather call to account for unexpected issues on a given day.
-        if (requestCount >= (duration.div(DAY_IN_SECONDS) - 1)) {
+        if (requestCount >= (duration.div(DAY_IN_SECONDS) - 2)) {
             //return funds back to insurance provider then end/kill the contract
             insurer.transfer(address(this).balance);
         } else { //insurer hasn't done the minimum number of data requests, client is eligible to receive his premium back
